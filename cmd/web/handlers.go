@@ -5,20 +5,31 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"snippetbox.adpollak.net/internal/models"
+
+	"github.com/julienschmidt/httprouter"
 )
+
+// Represent the form data and validation errors for the
+// form fields. Note all struct fields are deliberately EXPORTED
+// (i.e., start w/ Capital letter). Struct fields must be exported
+// in order to be read by the html/template package when rendering a template.
+type snippetCreateForm struct {
+	Title       string
+	Content     string
+	Expires     int
+	FieldErrors map[string]string
+}
 
 // Handler
 // NOTE: This signature was changed to be defined as a method against the *application type.
 // This allows us to not depend on some specific type.
 func (app *application) home(w http.ResponseWriter, r *http.Request) {
-	// Let's enforce a restriction on our servemux by 404ing if we ARE NOT on / exactly.
-	if r.URL.Path != "/" {
-		// http.NotFound(w, r)
-		app.notFound(w)
-		return
-	}
+	// Before, we had to check the r.URL.Path != "/" for this handler.
+	// Since httprouter matches the "/" path EXACTLY, we can remove this.
 
 	snippets, err := app.snippets.Latest()
 	if err != nil {
@@ -26,66 +37,27 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, snippet := range snippets {
-		fmt.Fprintf(w, "%+v\n", snippet)
-	}
-	/*
-		// Let's now add functionality to render a template file containing an HTML page.
-		// We will need to parse the template file.
-		// Use template.ParseFiles() to read the template file into a template set (ts).
-		//
-		// The file path passed in MUST either
-		// a) be relative to current working directory, or
-		// b) be an absolute path
-		//ts, err := template.ParseFiles("./ui/html/pages/home.tmpl")
-		files := []string{
-			"./ui/html/base.tmpl",
-			"./ui/html/pages/home.tmpl",
-			"./ui/html/partials/nav.tmpl",
-		}
+	// Call newTemplateData() helper to get a templateData struct containing the
+	// 'default' data (for now curr year) and add the snippets slice to it.
+	data := app.newTemplateData(r)
+	data.Snippets = snippets
 
-			ts, err := template.ParseFiles(files...)
-			if err != nil {
-				// log.Println(err.Error())
-				// Write the log message to the applicaiton type instead to use the error logger.
-				// app.errorLog.Println(err.Error())
-				// http.Error(w, "Internal Server Error", 500)
-				app.serverError(w, err)
-				return
-			}
-
-			// We then use Execute() on the ts to write the template content as the response body.
-			// The last parameter to Execute() represents any dynamic data we want to pass in.
-			//
-			// (Now ExecuteTemplate()) to write the content of the "base" template as the response body
-			err = ts.ExecuteTemplate(w, "base", nil)
-			if err != nil {
-				// Write the log message to the applicaiton type instead to use the error logger.
-				// app.errorLog.Println(err.Error())
-				// log.Println(err.Error())
-				// http.Error(w, "Internal Server Error", 500)
-				app.serverError(w, err)
-			}
-	*/
+	// Pass data to the render() helper
+	app.render(w, http.StatusOK, "home.tmpl", data)
 }
 
 // Handler
 func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
-	// Let's update this handler to acept an id query string parameter from the user.
-	// For now, (since no db), we will need to read the value of the id parameter and interpolate it
-	// with a placeholder response.
-	// Two steps to this:
-	// 1) We need to retrieve the value of the id parameter from the URL query string
-	// 2) Since this id IS untrusted user input, we should validate it to ensure its sensible.
-	//    For our case, this just means it contains a positive integer.
-	id, err := strconv.Atoi(r.URL.Query().Get("id"))
-	if err != nil || id < 1 {
-		//.http.NotFound(w, r)
+	// When parsing a request, any named parameters will be stored in the request context.
+	params := httprouter.ParamsFromContext(r.Context())
+
+	// Instead, use ByName() to get the value of id named parameter from the slice
+	// and validate it as normal.
+	id, err := strconv.Atoi(params.ByName("id"))
+	if err != nil {
 		app.notFound(w)
 		return
 	}
-
-	// w.Write([]byte("Display a specific snippet...\n"))
 
 	// Use SnippetModel's Get method to retrieve the data for a specific
 	// record based on its ID. If no record is found, return a 404 Not Found response.
@@ -99,57 +71,86 @@ func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Interpolate the id parameter with a placeholder response.
-	// fmt.Fprintf(w, "Display a specific snippet with ID %d...\n", id)
+	data := app.newTemplateData(r)
+	data.Snippet = snippet
 
-	// Write the snippet data as plain-text HTTP response body.
-	// TODO: look at format specifier
-	fmt.Fprintf(w, "%+v", snippet)
+	// Use our new render helper.
+	app.render(w, http.StatusOK, "view.tmpl", data)
 }
 
-// Handler
+// For now returns a placeholder response.
+// Will show the html form.
 func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
-	// Now, let's restrict this route to only respond to HTTP requests using the POST method.
-	// NOTE: how? -> Let's send a 405 (method not allowed) status code UNLESS the request is a POST.
+	// w.Write([]byte("Display the form for creating a new snippet here..."))
+	data := app.newTemplateData(r)
 
-	if r.Method != http.MethodPost {
-		// Send a 405 status code -> How? Well, how is the ResponseWriter interface setup?
-		// type ResponseWriter interface {
-		//      Header() http.Header
-		//      Write([]byte) (int, error)
-		//      WriteHeader(statusCode int)
-		// }
-		// These methods MUST be called in a specific order:
-		// 1) Header() is called to set response headers (if needed, otherwise don't call it)
-		// 2) WriteHeader(statusCode int) with the HTTP status code for the response (unless sending a response with 200 status code)
-		// 3) Write([]byte) is called to set the body for the response.
-		//
-		// Let's include an Allow header with our 405 response to let the user know what IS allowed.
-		w.Header().Set("Allow", "POST")
+	app.render(w, http.StatusOK, "create.tmpl", data)
+}
 
-		/* The http.Error() does the same as this in a more concise manner (send non-200 status code and plain-text response body)
-		w.WriteHeader(405)
-		w.Write([]byte("Method not allowed\n"))
-		*/
-		app.clientError(w, http.StatusMethodNotAllowed)
+// Processes and uses form data of snippet. Upon completion
+// redirects user to the view page to view their snippet.
+func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+	// Step 1: parse request body
+	err := r.ParseForm()
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
 		return
 	}
 
-	// Create some variables holding dummy data.
-	title := "O snail"
-	content := "O snail\nClimb Mount Fuji,\nBut slowly, slowly!\n\n– Kobayashi Issa"
-	expires := 7
+	// Step 2: retrieve PostForm() data. Expires is a integer
+	// so convert with strconv.Atoi() and throw an error is fail
+	// conversion.
+	expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
 
-	// Pass the data to the SnippetModel.Insert() method, receiving the ID
-	// of the new record back.
-	id, err := app.snippets.Insert(title, content, expires)
+	form := snippetCreateForm{
+		Title:       r.PostForm.Get("title"),
+		Content:     r.PostForm.Get("content"),
+		Expires:     expires,
+		FieldErrors: map[string]string{},
+	}
+
+	// 1) title value not empty and <= 100 chars long
+	if strings.TrimSpace(form.Title) == "" {
+		form.FieldErrors["title"] = "This field cannot be blank"
+	} else if utf8.RuneCountInString(form.Title) > 100 {
+		form.FieldErrors["title"] = "This field cannot be more than 100 characters"
+	}
+
+	// 1a) content value non-empty
+	if strings.TrimSpace(form.Content) == "" {
+		form.FieldErrors["content"] = "This field cannot be blank"
+	}
+
+	// 2) expires value matches one of our permitted values
+	// 1, 7, 365
+	if expires != 1 && expires != 7 && expires != 365 {
+		form.FieldErrors["expires"] = "This field must equal 1, 7, or 365"
+	}
+
+	// If any validation errors occur:
+	// a) Re-display web-page form (create.tmpl) passing in snippetCreateForm instance
+	// as dyn data in the Form field.
+	// b) re-populate any prev submitted data, done via passing in snippetCreateForm instance to Form field.
+	if len(form.FieldErrors) > 0 {
+		data := app.newTemplateData(r)
+		data.Form = form
+		app.render(w, http.StatusUnprocessableEntity, "create.tmpl", data)
+		return
+	}
+
+	// insert title, content, expiration into db
+	id, err := app.snippets.Insert(form.Title, form.Content, form.Expires)
 	if err != nil {
 		app.serverError(w, err)
 		return
 	}
 
-	// w.Write([]byte("Create a new snippet...\n"))
+	// w.Write([]byte("Create a new snippet...\"))
 	// Redirect the user to the relevant page for the snippet.
-	// TODO: look up what StatusSeeOther is.
-	http.Redirect(w, r, fmt.Sprintf("/snippet/view?id=%d", id), http.StatusSeeOther)
+	// Update redirect path to the new clean URL format.
+	http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
 }

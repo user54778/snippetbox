@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"flag"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
@@ -13,9 +14,10 @@ import (
 
 // This type holds application-wide dependencies for our webapp.
 type application struct {
-	errorLog *log.Logger
-	infoLog  *log.Logger
-	snippets *models.SnippetModel // NOTE: Make the SnippetModel available to our handlers.
+	errorLog      *log.Logger
+	infoLog       *log.Logger
+	snippets      *models.SnippetModel          // NOTE: Make the SnippetModel available to our handlers.
+	templateCache map[string]*template.Template // make avail cache to our handlers
 }
 
 // Wraps sql.Open() and returns a sql.DB connection pool for
@@ -58,15 +60,21 @@ func main() {
 	if err != nil {
 		errorLog.Fatal(err)
 	}
-
 	defer db.Close() // NOTE:
+
+	// Initialize new template cache
+	templateCache, err := newTemplateCache()
+	if err != nil {
+		errorLog.Fatal(err)
+	}
 
 	// Initialize a models.SnippetModel instance and add it to the application
 	// dependencies.
 	app := &application{
-		errorLog: errorLog,
-		infoLog:  infoLog,
-		snippets: &models.SnippetModel{DB: db},
+		errorLog:      errorLog,
+		infoLog:       infoLog,
+		snippets:      &models.SnippetModel{DB: db},
+		templateCache: templateCache,
 	}
 	/*
 		// Initialize a new servemux, then register the `home` function
