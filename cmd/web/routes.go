@@ -26,19 +26,21 @@ func (app *application) routes() http.Handler {
 	// Serve specific static file
 	router.Handler(http.MethodGet, "/static/*filepath", http.StripPrefix("/static", fileServer))
 
+	// Create new middleware chain containing specific middleware for dynamic application.
+	// Will only contain LoadAndSave middleware for now.
+	dynamic := alice.New(app.sessionManager.LoadAndSave)
+
 	/*
 		mux.HandleFunc("/", app.home)
 		mux.HandleFunc("/snippet/view", app.snippetView)
 		mux.HandleFunc("/snippet/create", app.snippetCreate)
 	*/
 	// http method, pattern req url path must match, handler to dispatch to
-	router.HandlerFunc(http.MethodGet, "/", app.home)
-	router.HandlerFunc(http.MethodGet, "/snippet/view/:id", app.snippetView)
-	router.HandlerFunc(http.MethodGet, "/snippet/create", app.snippetCreate)
-	router.HandlerFunc(http.MethodPost, "/snippet/create", app.snippetCreatePost)
+	router.Handler(http.MethodGet, "/", dynamic.ThenFunc(app.home))
+	router.Handler(http.MethodGet, "/snippet/view/:id", dynamic.ThenFunc(app.snippetView))
+	router.Handler(http.MethodGet, "/snippet/create", dynamic.ThenFunc(app.snippetCreate))
+	router.Handler(http.MethodPost, "/snippet/create", dynamic.ThenFunc(app.snippetCreatePost))
 
-	// Pass the servemux as the 'next' parameter to the secureHeaders middleware.
-	// Added passing the servemux from secureHeaders to logRequest first
 	// NOTE: logRequest ↔ secureHeaders ↔ servemux ↔ handler
 	// return app.recoverPanic(app.logRequest(secureHeaders(mux)))
 

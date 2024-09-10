@@ -7,17 +7,21 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/alexedwards/scs/mysqlstore"
+	"github.com/alexedwards/scs/v2"
 	_ "github.com/go-sql-driver/mysql"
 	"snippetbox.adpollak.net/internal/models"
 )
 
 // This type holds application-wide dependencies for our webapp.
 type application struct {
-	errorLog      *log.Logger
-	infoLog       *log.Logger
-	snippets      *models.SnippetModel          // NOTE: Make the SnippetModel available to our handlers.
-	templateCache map[string]*template.Template // make avail cache to our handlers
+	errorLog       *log.Logger
+	infoLog        *log.Logger
+	snippets       *models.SnippetModel          // NOTE: Make the SnippetModel available to our handlers.
+	templateCache  map[string]*template.Template // make avail cache to our handlers
+	sessionManager *scs.SessionManager
 }
 
 // Wraps sql.Open() and returns a sql.DB connection pool for
@@ -51,7 +55,6 @@ func main() {
 
 	// Create a new logger using log.New() for writing information messages.
 	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
-
 	// Create a new logger for writing error messages
 	// log.Lshortfile flag includes relevant file name and line number.
 	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
@@ -68,13 +71,20 @@ func main() {
 		errorLog.Fatal(err)
 	}
 
+	// NOTE: Initialize a new sessionManager. Configured to use
+	// our MySQL db as the session store, and set a lifetime of 12 hours.
+	sessionManager := scs.New()
+	sessionManager.Store = mysqlstore.New(db)
+	sessionManager.Lifetime = 12 * time.Hour
+
 	// Initialize a models.SnippetModel instance and add it to the application
 	// dependencies.
 	app := &application{
-		errorLog:      errorLog,
-		infoLog:       infoLog,
-		snippets:      &models.SnippetModel{DB: db},
-		templateCache: templateCache,
+		errorLog:       errorLog,
+		infoLog:        infoLog,
+		snippets:       &models.SnippetModel{DB: db},
+		templateCache:  templateCache,
+		sessionManager: sessionManager,
 	}
 	/*
 		// Initialize a new servemux, then register the `home` function

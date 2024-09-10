@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"snippetbox.adpollak.net/internal/models"
+	"snippetbox.adpollak.net/internal/validator"
 
 	"github.com/julienschmidt/httprouter"
 )
@@ -18,10 +17,11 @@ import (
 // (i.e., start w/ Capital letter). Struct fields must be exported
 // in order to be read by the html/template package when rendering a template.
 type snippetCreateForm struct {
-	Title       string
-	Content     string
-	Expires     int
-	FieldErrors map[string]string
+	Title   string
+	Content string
+	Expires int
+	// FieldErrors map[string]string
+	validator.Validator // composition
 }
 
 // Handler
@@ -71,18 +71,34 @@ func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	/*
+		// Retrieve and remove our flash message from the sessionManager
+		flash := app.sessionManager.PopString(r.Context(), "flash")
+	*/
+
 	data := app.newTemplateData(r)
 	data.Snippet = snippet
+
+	/*
+		// Now pass the flash message to the template
+		data.Flash = flash
+	*/
 
 	// Use our new render helper.
 	app.render(w, http.StatusOK, "view.tmpl", data)
 }
 
-// For now returns a placeholder response.
-// Will show the html form.
+// Render the html form from the GET method.
 func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
 	// w.Write([]byte("Display the form for creating a new snippet here..."))
 	data := app.newTemplateData(r)
+
+	// NOTE: init a new createSnippetForm instance and pass it to the template.
+	// Otherwise, upon visiting /snippet/create Go would try to eval some tmpl tag
+	// such as .Form.FieldErrors.title which would be nil
+	data.Form = snippetCreateForm{
+		Expires: 365, // default value
+	}
 
 	app.render(w, http.StatusOK, "create.tmpl", data)
 }
@@ -107,35 +123,53 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 	}
 
 	form := snippetCreateForm{
-		Title:       r.PostForm.Get("title"),
-		Content:     r.PostForm.Get("content"),
-		Expires:     expires,
-		FieldErrors: map[string]string{},
+		Title:   r.PostForm.Get("title"),
+		Content: r.PostForm.Get("content"),
+		Expires: expires,
+		// FieldErrors: map[string]string{},
 	}
 
-	// 1) title value not empty and <= 100 chars long
-	if strings.TrimSpace(form.Title) == "" {
-		form.FieldErrors["title"] = "This field cannot be blank"
-	} else if utf8.RuneCountInString(form.Title) > 100 {
-		form.FieldErrors["title"] = "This field cannot be more than 100 characters"
-	}
+	/*
+		// 1) title value not empty and <= 100 chars long
+		if strings.TrimSpace(form.Title) == "" {
+			form.FieldErrors["title"] = "This field cannot be blank"
+		} else if utf8.RuneCountInString(form.Title) > 100 {
+			form.FieldErrors["title"] = "This field cannot be more than 100 characters"
+		}
 
-	// 1a) content value non-empty
-	if strings.TrimSpace(form.Content) == "" {
-		form.FieldErrors["content"] = "This field cannot be blank"
-	}
+		// 1a) content value non-empty
+		if strings.TrimSpace(form.Content) == "" {
+			form.FieldErrors["content"] = "This field cannot be blank"
+		}
 
-	// 2) expires value matches one of our permitted values
-	// 1, 7, 365
-	if expires != 1 && expires != 7 && expires != 365 {
-		form.FieldErrors["expires"] = "This field must equal 1, 7, or 365"
-	}
+		// 2) expires value matches one of our permitted values
+		// 1, 7, 365
+		if expires != 1 && expires != 7 && expires != 365 {
+			form.FieldErrors["expires"] = "This field must equal 1, 7, or 365"
+		}
 
-	// If any validation errors occur:
-	// a) Re-display web-page form (create.tmpl) passing in snippetCreateForm instance
-	// as dyn data in the Form field.
-	// b) re-populate any prev submitted data, done via passing in snippetCreateForm instance to Form field.
-	if len(form.FieldErrors) > 0 {
+		// If any validation errors occur:
+		// a) Re-display web-page form (create.tmpl) passing in snippetCreateForm instance
+		// as dyn data in the Form field.
+		// b) re-populate any prev submitted data, done via passing in snippetCreateForm instance to Form field.
+		if len(form.FieldErrors) > 0 {
+			data := app.newTemplateData(r)
+			data.Form = form
+			app.render(w, http.StatusUnprocessableEntity, "create.tmpl", data)
+			return
+		}
+	*/
+
+	// Call CheckField to execute our validation checks.
+	form.CheckField(validator.NotBlank(form.Title), "title", "This field cannot be blank")
+	form.CheckField(validator.MaxChars(form.Title, 100), "title", "This field cannot be more than 100 characters long")
+	form.CheckField(validator.NotBlank(form.Content), "content", "This field cannot be blank")
+	form.CheckField(validator.PermittedInt(form.Expires, 1, 7, 365), "expires", "This field must equal 1, 7, or 365")
+
+	// Use Valid() to see if any checks failed.
+	// If so, re-render passing in the form as before.
+	if !form.Valid() {
+		// re-render
 		data := app.newTemplateData(r)
 		data.Form = form
 		app.render(w, http.StatusUnprocessableEntity, "create.tmpl", data)
@@ -148,6 +182,9 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 		app.serverError(w, err)
 		return
 	}
+
+	// NOTE: Use Put() to add a string value and corresponding flash key to session data.
+	app.sessionManager.Put(r.Context(), "flash", "Snippet created successfully!")
 
 	// w.Write([]byte("Create a new snippet...\"))
 	// Redirect the user to the relevant page for the snippet.
