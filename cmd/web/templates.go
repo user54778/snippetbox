@@ -11,11 +11,12 @@ import (
 // Define a type to act as a holding structure for
 // any dynamic data we want to pass to our HTML templates.
 type templateData struct {
-	CurrentYear int // common dyn data we want to include on every page
-	Snippet     *models.Snippet
-	Snippets    []*models.Snippet
-	Form        any // used to pass validation errors and prev submitted data back to template when re-display the form
-	Flash       string
+	CurrentYear     int // common dyn data we want to include on every page
+	Snippet         *models.Snippet
+	Snippets        []*models.Snippet
+	Form            any // used to pass validation errors and prev submitted data back to template when re-display the form
+	Flash           string
+	IsAuthenticated bool
 }
 
 // A function to cache our parsed tmpl files.

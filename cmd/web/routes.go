@@ -26,27 +26,28 @@ func (app *application) routes() http.Handler {
 	// Serve specific static file
 	router.Handler(http.MethodGet, "/static/*filepath", http.StripPrefix("/static", fileServer))
 
-	// Create new middleware chain containing specific middleware for dynamic application.
-	// Will only contain LoadAndSave middleware for now.
+	// NOTE: Unprotected application routes using the "dynamic" middleware chain
 	dynamic := alice.New(app.sessionManager.LoadAndSave)
 
-	/*
-		mux.HandleFunc("/", app.home)
-		mux.HandleFunc("/snippet/view", app.snippetView)
-		mux.HandleFunc("/snippet/create", app.snippetCreate)
-	*/
 	// http method, pattern req url path must match, handler to dispatch to
 	router.Handler(http.MethodGet, "/", dynamic.ThenFunc(app.home))
 	router.Handler(http.MethodGet, "/snippet/view/:id", dynamic.ThenFunc(app.snippetView))
-	router.Handler(http.MethodGet, "/snippet/create", dynamic.ThenFunc(app.snippetCreate))
-	router.Handler(http.MethodPost, "/snippet/create", dynamic.ThenFunc(app.snippetCreatePost))
+	router.Handler(http.MethodGet, "/user/signup", dynamic.ThenFunc(app.userSignup))
+	router.Handler(http.MethodPost, "/user/signup", dynamic.ThenFunc(app.userSignupPost))
+	router.Handler(http.MethodGet, "/user/login", dynamic.ThenFunc(app.userLogin))
+	router.Handler(http.MethodPost, "/user/login", dynamic.ThenFunc(app.userLoginPost))
+
+	// NOTE: protected (authenticated-only) application routes, use a new "protected"
+	// middleware chain which includes the requireAuthentication middleware.
+	protected := dynamic.Append(app.requireAuthentication)
+
+	router.Handler(http.MethodGet, "/snippet/create", protected.ThenFunc(app.snippetCreate))
+	router.Handler(http.MethodPost, "/snippet/create", protected.ThenFunc(app.snippetCreatePost))
+	router.Handler(http.MethodPost, "/user/logout", protected.ThenFunc(app.userLogoutPost))
 
 	// NOTE: logRequest ↔ secureHeaders ↔ servemux ↔ handler
 	// return app.recoverPanic(app.logRequest(secureHeaders(mux)))
-
-	// Create a middleware chain using the justinas/alice package
 	standard := alice.New(app.recoverPanic, app.logRequest, secureHeaders)
-
 	// Return the standard middleware chain followed by the servemux
 	return standard.Then(router)
 }

@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
 	"time"
+
+	"github.com/go-playground/form/v4"
 )
 
 // Write an error message and stack trace to the errorLog, then send
@@ -37,10 +40,14 @@ func (app *application) newTemplateData(r *http.Request) *templateData {
 	return &templateData{
 		CurrentYear: time.Now().Year(),
 		Flash:       app.sessionManager.PopString(r.Context(), "flash"),
+		// auto-added every time we render a template
+		IsAuthenticated: app.isAuthenticated(r),
 	}
 }
 
 // A helper method to render templates from the in-memory cache.
+// page is the template.
+// data is template data we want to pass into the template to render.
 func (app *application) render(w http.ResponseWriter, status int, page string, data *templateData) {
 	// Retrieve the relevant template set from the cache based on the page
 	// name (i.e., 'home.tmpl'). If no entry exists in the cache, create a new
@@ -69,4 +76,36 @@ func (app *application) render(w http.ResponseWriter, status int, page string, d
 	// Write contents of the buffer to our ResponseWriter.
 	// NOTE: notice how this is another situation ResponseWriter takes an io.Writer.
 	buf.WriteTo(w)
+}
+
+// dst is the target destination we want to decode the form data into.
+func (app *application) decodePostForm(r *http.Request, dst any) error {
+	// call PostForm() on the request
+	err := r.ParseForm()
+	if err != nil {
+		return err
+	}
+
+	err = app.formDecoder.Decode(dst, r.PostForm)
+	if err != nil {
+		var invalidDecoderError *form.InvalidDecoderError
+
+		// Using an invalid target destination will result in an error, of type
+		// *form.InvalidDecoderError, so use errors.As() to check for this.
+		// This is a CRITICAL error if it occurs, so immediately panic the applicaiton.
+		if errors.As(err, &invalidDecoderError) {
+			panic(err)
+		}
+
+		// Return all other errors as normal
+		return err
+	}
+
+	return nil
+}
+
+// Helper to check if a request is made by an authenticated user via
+// checking existence of authenticatedUserID value in their session data.
+func (app *application) isAuthenticated(r *http.Request) bool {
+	return app.sessionManager.Exists(r.Context(), "authenticatedUserID")
 }

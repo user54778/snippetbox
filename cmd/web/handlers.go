@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -17,11 +18,11 @@ import (
 // (i.e., start w/ Capital letter). Struct fields must be exported
 // in order to be read by the html/template package when rendering a template.
 type snippetCreateForm struct {
-	Title   string
-	Content string
-	Expires int
+	Title   string `form:"title"`
+	Content string `form:"content"`
+	Expires int    `form:"expires"`
 	// FieldErrors map[string]string
-	validator.Validator // composition
+	validator.Validator `form:"-"` // composition
 }
 
 // Handler
@@ -106,59 +107,39 @@ func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
 // Processes and uses form data of snippet. Upon completion
 // redirects user to the view page to view their snippet.
 func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
-	// Step 1: parse request body
-	err := r.ParseForm()
-	if err != nil {
-		app.clientError(w, http.StatusBadRequest)
-		return
-	}
+	/*
+		// Step 1: parse request body
+		err := r.ParseForm()
+		if err != nil {
+			app.clientError(w, http.StatusBadRequest)
+			return
+		}
+	*/
+	var form snippetCreateForm // zero-valued instance of snippetCreateForm struct.
 
 	// Step 2: retrieve PostForm() data. Expires is a integer
 	// so convert with strconv.Atoi() and throw an error is fail
 	// conversion.
-	expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+	/*
+		expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+		if err != nil {
+			app.clientError(w, http.StatusBadRequest)
+			return
+		}
+
+		form := snippetCreateForm{
+			Title:   r.PostForm.Get("title"),
+			Content: r.PostForm.Get("content"),
+			Expires: expires,
+		}
+	*/
+
+	// Use our helper to handle nil panic.
+	err := app.decodePostForm(r, &form)
 	if err != nil {
 		app.clientError(w, http.StatusBadRequest)
 		return
 	}
-
-	form := snippetCreateForm{
-		Title:   r.PostForm.Get("title"),
-		Content: r.PostForm.Get("content"),
-		Expires: expires,
-		// FieldErrors: map[string]string{},
-	}
-
-	/*
-		// 1) title value not empty and <= 100 chars long
-		if strings.TrimSpace(form.Title) == "" {
-			form.FieldErrors["title"] = "This field cannot be blank"
-		} else if utf8.RuneCountInString(form.Title) > 100 {
-			form.FieldErrors["title"] = "This field cannot be more than 100 characters"
-		}
-
-		// 1a) content value non-empty
-		if strings.TrimSpace(form.Content) == "" {
-			form.FieldErrors["content"] = "This field cannot be blank"
-		}
-
-		// 2) expires value matches one of our permitted values
-		// 1, 7, 365
-		if expires != 1 && expires != 7 && expires != 365 {
-			form.FieldErrors["expires"] = "This field must equal 1, 7, or 365"
-		}
-
-		// If any validation errors occur:
-		// a) Re-display web-page form (create.tmpl) passing in snippetCreateForm instance
-		// as dyn data in the Form field.
-		// b) re-populate any prev submitted data, done via passing in snippetCreateForm instance to Form field.
-		if len(form.FieldErrors) > 0 {
-			data := app.newTemplateData(r)
-			data.Form = form
-			app.render(w, http.StatusUnprocessableEntity, "create.tmpl", data)
-			return
-		}
-	*/
 
 	// Call CheckField to execute our validation checks.
 	form.CheckField(validator.NotBlank(form.Title), "title", "This field cannot be blank")
@@ -190,4 +171,155 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 	// Redirect the user to the relevant page for the snippet.
 	// Update redirect path to the new clean URL format.
 	http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+}
+
+// Hold form data for the user signup.
+type userSignupForm struct {
+	Name                string `form:"name"`
+	Email               string `form:"email"`
+	Password            string `form:"password"`
+	validator.Validator `form:"-"`
+}
+
+// Hold form data for the user login.
+type userLoginForm struct {
+	Email               string `form:"email"`
+	Password            string `form:"password"`
+	validator.Validator `form:"-"`
+}
+
+// Handler to display an HTML form for signing up a new user.
+func (app *application) userSignup(w http.ResponseWriter, r *http.Request) {
+	data := app.newTemplateData(r)
+	data.Form = userSignupForm{} // no defaults
+	app.render(w, http.StatusOK, "signup.tmpl", data)
+}
+
+// Handler to process the HTML so as to create a new user.
+func (app *application) userSignupPost(w http.ResponseWriter, r *http.Request) {
+	var form userSignupForm
+
+	err := app.decodePostForm(r, &form)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// Validate form contents using our helper functions.
+	form.CheckField(validator.NotBlank(form.Name), "name", "This field cannot be blank")
+	form.CheckField(validator.NotBlank(form.Email), "email", "This field cannot be blank")
+	form.CheckField(validator.Matches(form.Email, validator.EmailRX), "email", "This field must be a valid email address")
+	form.CheckField(validator.NotBlank(form.Password), "password", "This field cannot be blank")
+	form.CheckField(validator.MinChars(form.Password, 8), "password", "This field must be at least 8 characters long")
+
+	if !form.Valid() {
+		data := app.newTemplateData(r)
+		data.Form = form
+		app.render(w, http.StatusUnprocessableEntity, "signup.tmpl", data)
+		return
+	}
+
+	// Try to create a new user record in the database. If the email already
+	// exists then add an error message to the form and re-display it.
+	err = app.users.Insert(form.Name, form.Email, form.Password)
+	if err != nil {
+		if errors.Is(err, models.ErrDuplicateEmail) {
+			log.Println("Duplicate Detected")
+			form.AddFieldError("email", "Email address already in use")
+
+			data := app.newTemplateData(r)
+			data.Form = form
+			app.render(w, http.StatusUnprocessableEntity, "signup.tmpl", data)
+		} else {
+			// NOTE: There was an issue causing it to throw a serverError every time an email a duplicate.
+			// I believe the issue was due to the Users table; perhaps index or data type was setup incorrectly?
+			app.serverError(w, err)
+		}
+
+		return
+	}
+
+	// Otherwise add a confirmation flash message to the session confirming
+	// that their signup worked.
+	app.sessionManager.Put(r.Context(), "flash", "Your signup was successful. Please log in.")
+
+	// Then redirect the user to the login page.
+	http.Redirect(w, r, "/user/login", http.StatusSeeOther) // NOTE:
+}
+
+// Handler for displaying an HTML form for logging in a user.
+func (app *application) userLogin(w http.ResponseWriter, r *http.Request) {
+	data := app.newTemplateData(r)
+	data.Form = userLoginForm{} // no defaults
+	app.render(w, http.StatusOK, "login.tmpl", data)
+}
+
+// Handler to process the HTML form so as to authenticate and login the user.
+func (app *application) userLoginPost(w http.ResponseWriter, r *http.Request) {
+	// 1) Parse the submitted login form data
+	var form userLoginForm
+
+	err := app.decodePostForm(r, &form)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// 1a) validation form checks
+	form.CheckField(validator.NotBlank(form.Email), "email", "This field cannot be blank")
+	form.CheckField(validator.Matches(form.Email, validator.EmailRX), "email", "This field must be a valid email address")
+	form.CheckField(validator.NotBlank(form.Password), "password", "This field cannot be blank")
+
+	if !form.Valid() {
+		data := app.newTemplateData(r)
+		data.Form = form
+		app.render(w, http.StatusUnprocessableEntity, "login.tmpl", data)
+		return
+	}
+
+	// 2) Call authenticate
+	id, err := app.users.Authenticate(form.Email, form.Password)
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidCredentials) {
+			form.AddNonFieldError("Email or password is incorrect")
+
+			data := app.newTemplateData(r)
+			data.Form = form
+			app.render(w, http.StatusUnprocessableEntity, "login.tmpl", data)
+		} else {
+			app.serverError(w, err)
+		}
+
+		return
+	}
+
+	// 3) add to our session if correct authentication and then redirect
+	// Use RenewToken() to generate a new session ID when the authentication
+	// state/privelege levels change for the user. (i.e., login/logout operations)
+	err = app.sessionManager.RenewToken(r.Context())
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	app.sessionManager.Put(r.Context(), "authenticatedUserID", id)
+
+	http.Redirect(w, r, "/snippet/create", http.StatusSeeOther)
+}
+
+// Handler to process the HTML form so as to logout the user.
+func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
+	err := app.sessionManager.RenewToken(r.Context())
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	// Remove the authenticatedUserID from the session data so that the user is
+	// logged out.
+	app.sessionManager.Remove(r.Context(), "authenticatedUserID")
+
+	app.sessionManager.Put(r.Context(), "flash", "You have been logged out successfully")
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

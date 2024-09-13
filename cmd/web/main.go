@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"database/sql"
 	"flag"
 	"html/template"
@@ -9,10 +10,12 @@ import (
 	"os"
 	"time"
 
+	"snippetbox.adpollak.net/internal/models"
+
 	"github.com/alexedwards/scs/mysqlstore"
 	"github.com/alexedwards/scs/v2"
+	"github.com/go-playground/form/v4"
 	_ "github.com/go-sql-driver/mysql"
-	"snippetbox.adpollak.net/internal/models"
 )
 
 // This type holds application-wide dependencies for our webapp.
@@ -20,7 +23,9 @@ type application struct {
 	errorLog       *log.Logger
 	infoLog        *log.Logger
 	snippets       *models.SnippetModel          // NOTE: Make the SnippetModel available to our handlers.
+	users          *models.UserModel             // Same as SnippetModel
 	templateCache  map[string]*template.Template // make avail cache to our handlers
+	formDecoder    *form.Decoder
 	sessionManager *scs.SessionManager
 }
 
@@ -71,6 +76,8 @@ func main() {
 		errorLog.Fatal(err)
 	}
 
+	formDecoder := form.NewDecoder()
+
 	// NOTE: Initialize a new sessionManager. Configured to use
 	// our MySQL db as the session store, and set a lifetime of 12 hours.
 	sessionManager := scs.New()
@@ -83,46 +90,35 @@ func main() {
 		errorLog:       errorLog,
 		infoLog:        infoLog,
 		snippets:       &models.SnippetModel{DB: db},
+		users:          &models.UserModel{DB: db},
 		templateCache:  templateCache,
+		formDecoder:    formDecoder,
 		sessionManager: sessionManager,
 	}
-	/*
-		// Initialize a new servemux, then register the `home` function
-		// as the handler for the "/" pattern.
-		mux := http.NewServeMux()
 
-		// Create a file server which SERVES files out of the "./ui/static" directory.
-		// The path given is relative
-		fileServer := http.FileServer(http.Dir("./ui/static/"))
-
-		// Register the file server as a handler for all URL paths that start with /static/.
-		// NOTE: we must strip the /static prefix prior to the request receiving the server.
-		mux.Handle("/static/", http.StripPrefix("/static", fileServer))
-
-		// NOTE: HandleFunc is described as so: type Handler interface {
-		//                                        ServeHTTP(http.ResponseWriter, *http.Request)
-		//                                      }
-		// The pointer indicates you may modify the request, however, most handlers will just read from it.
-		mux.HandleFunc("/", app.home) // Refactored to be methods on the application type.
-		mux.HandleFunc("/snippet/view", app.snippetView)
-		mux.HandleFunc("/snippet/create", app.snippetCreate)
-	*/
+	// Initialize a tlsConfig struct to hold non-default TLS settings we want the server to use.
+	// Only changing curve preference values, so only elliptic curves with assemply impls
+	// will be used.
+	tlsConfig := &tls.Config{
+		CurvePreferences: []tls.CurveID{tls.X25519, tls.CurveP256},
+	}
 
 	// NOTE: Go's HTTP server by default uses the standard logger.
 	// We initialize a new http.Server struct containing the config settings for
 	// the server as opposed to using the ListenAndServe shortcut to use our custom error.
 	srv := &http.Server{
-		Addr:     *addr,
-		ErrorLog: errorLog,
-		Handler:  app.routes(), // updated to call app.routes() to get the servemux containing our routes.
+		Addr:      *addr,
+		ErrorLog:  errorLog,
+		Handler:   app.routes(), // updated to call app.routes() to get the servemux containing our routes.
+		TLSConfig: tlsConfig,
+		// Add Idle, Read, and Write timeouts to the server
+		IdleTimeout:  time.Minute,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
 	}
 
 	infoLog.Printf("Starting server on %s\n", *addr)
 	// err := http.ListenAndServe(*addr, mux)
-	err = srv.ListenAndServe()
-	if err != nil {
-		if err != http.ErrServerClosed {
-			errorLog.Fatal(err)
-		}
-	}
+	err = srv.ListenAndServeTLS("./tls/cert.pem", "./tls/key.pem")
+	errorLog.Fatal(err)
 }
