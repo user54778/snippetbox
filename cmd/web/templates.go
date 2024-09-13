@@ -17,6 +17,7 @@ type templateData struct {
 	Form            any // used to pass validation errors and prev submitted data back to template when re-display the form
 	Flash           string
 	IsAuthenticated bool
+	CSRFToken       string
 }
 
 // A function to cache our parsed tmpl files.

@@ -27,7 +27,7 @@ func (app *application) routes() http.Handler {
 	router.Handler(http.MethodGet, "/static/*filepath", http.StripPrefix("/static", fileServer))
 
 	// NOTE: Unprotected application routes using the "dynamic" middleware chain
-	dynamic := alice.New(app.sessionManager.LoadAndSave)
+	dynamic := alice.New(app.sessionManager.LoadAndSave, noSurf)
 
 	// http method, pattern req url path must match, handler to dispatch to
 	router.Handler(http.MethodGet, "/", dynamic.ThenFunc(app.home))

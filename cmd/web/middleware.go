@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+
+	"github.com/justinas/nosurf"
 )
 
 // This is a middleware function.
@@ -56,6 +59,11 @@ func (app *application) recoverPanic(next http.Handler) http.Handler {
 	})
 }
 
+// NOTE: authentication/authorization/security middleware
+
+// Middleware to prevent unauthenticated users from attempting to visit
+// any routes with URL path /snippet/create or any other that requires
+// to be logged in.
 func (app *application) requireAuthentication(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !app.isAuthenticated(r) {
@@ -70,4 +78,49 @@ func (app *application) requireAuthentication(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (app *application) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1) Retrieve the user's ID from the session data.
+		// We use GetInt() to accomplish this; it returns a zero value (for int that is 0)
+		// if no "authenticatedUserID" value is in the session.
+		id := app.sessionManager.GetInt(r.Context(), "authenticatedUserID")
+		if id == 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 2) Check the database to see if a user with that ID corresponds to
+		// a valid user.
+		exists, err := app.users.Exists(id)
+		if err != nil {
+			app.serverError(w, err)
+			return
+		}
+
+		// 3) Matching user found; Update the request context to include
+		// an isAuthenticatedContextKey with the value true.
+		// Create a new copy of the request ctx and assign to r.
+		if exists {
+			ctx := context.WithValue(r.Context(), isAuthenticatedContextKey, true)
+			r = r.WithContext(ctx)
+		}
+
+		// Call the next handler in the chain.
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Middleware that uses a customized CSRF cookie with
+// Secure, Path, and HttpOnly attributes set.
+func noSurf(next http.Handler) http.Handler {
+	csrfHandler := nosurf.New(next)
+	csrfHandler.SetBaseCookie(http.Cookie{
+		HttpOnly: true,
+		Path:     "/",
+		Secure:   true,
+	})
+
+	return csrfHandler
 }
