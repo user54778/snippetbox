@@ -5,6 +5,7 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/justinas/alice"
+	"snippetbox.adpollak.net/ui"
 )
 
 // Returns a ServeMux containing our application routes.
@@ -13,7 +14,6 @@ import (
 func (app *application) routes() http.Handler {
 	// Initialize the router
 	router := httprouter.New()
-	// mux := http.NewServeMux()
 
 	// Create a handler function that wraps our notFound helper, and then assigns it as the custom
 	// handler for the 404 Not Found responses.
@@ -21,13 +21,20 @@ func (app *application) routes() http.Handler {
 		app.notFound(w)
 	})
 
-	fileServer := http.FileServer(http.Dir("./ui/static/"))
-	// mux.Handle("/static/", http.StripPrefix("/static", fileServer))
+	// Take the ui.Files embedded filesystem and convert it to a http.FS type
+	// such that it satisfies the http.FileSystem interface. We then
+	// pass that to the http.FileServer() function to create the file server handler.
+	fileServer := http.FileServer(http.FS(ui.Files))
+
 	// Serve specific static file
-	router.Handler(http.MethodGet, "/static/*filepath", http.StripPrefix("/static", fileServer))
+	// Static files contained in static folder of ui.Files embedded filesystem.
+	// So, we no longer need to strip the prefix from the request url, since any requests now
+	// starting with /static/ can just be passed directly to the file server and the corresponding
+	// static file will be served (as long as it exists).
+	router.Handler(http.MethodGet, "/static/*filepath", fileServer)
 
 	// NOTE: Unprotected application routes using the "dynamic" middleware chain
-	dynamic := alice.New(app.sessionManager.LoadAndSave, noSurf)
+	dynamic := alice.New(app.sessionManager.LoadAndSave, noSurf, app.authenticate)
 
 	// http method, pattern req url path must match, handler to dispatch to
 	router.Handler(http.MethodGet, "/", dynamic.ThenFunc(app.home))
