@@ -94,7 +94,12 @@ func newTemplateCache() (map[string]*template.Template, error) {
 // Create a humanDate function which returns a formateed string representation
 // of a time.Time object.
 func humanDate(t time.Time) string {
-	return t.Format("02 Jan 2006 at 15:04")
+	if t.IsZero() {
+		return ""
+	}
+
+	// Convert to UTC prior to formatting
+	return t.UTC().Format("02 Jan 2006 at 15:04")
 }
 
 // Initialize a template.FuncMap object and store it in a global var.
