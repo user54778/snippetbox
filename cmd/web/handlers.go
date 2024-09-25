@@ -189,6 +189,8 @@ type userLoginForm struct {
 	validator.Validator `form:"-"`
 }
 
+// NOTE: User handlers
+
 // Handler to display an HTML form for signing up a new user.
 func (app *application) userSignup(w http.ResponseWriter, r *http.Request) {
 	data := app.newTemplateData(r)
@@ -305,6 +307,14 @@ func (app *application) userLoginPost(w http.ResponseWriter, r *http.Request) {
 
 	app.sessionManager.Put(r.Context(), "authenticatedUserID", id)
 
+	// Check the user's session for a URL path that they may have been attempting
+	// to login to.
+	urlPath := app.sessionManager.PopString(r.Context(), "redirectPathAfterLogin")
+	if urlPath != "" {
+		http.Redirect(w, r, urlPath, http.StatusSeeOther)
+		return
+	}
+
 	http.Redirect(w, r, "/snippet/create", http.StatusSeeOther)
 }
 
@@ -323,6 +333,107 @@ func (app *application) userLogoutPost(w http.ResponseWriter, r *http.Request) {
 	app.sessionManager.Put(r.Context(), "flash", "You have been logged out successfully")
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// NOTE: Account handlers
+
+type accountPasswordUpdateForm struct {
+	CurrentPassword         string `form:"currentPassword"`
+	NewPassword             string `form:"newPassword"`
+	NewPasswordConfirmation string `form:"newPasswordConfirmation"`
+	validator.Validator     `form:"-"`
+}
+
+// Handler to display an HTML form containing an authenticated
+// user's name, email, and join date.
+func (app *application) accountView(w http.ResponseWriter, r *http.Request) {
+	// 1) get the authenticatedUserID from the session
+	userID := app.sessionManager.GetInt(r.Context(), "authenticatedUserID")
+	// 2) fetch details of the relevant user from the database
+	// dump in plain text HTTP response
+	user, err := app.users.Get(userID)
+	if err != nil {
+		// Should redirect if not logged in
+		if errors.Is(err, models.ErrNoRecord) {
+			http.Redirect(w, r, "/user/login", http.StatusSeeOther)
+		} else {
+			app.serverError(w, err)
+		}
+		return
+	}
+
+	// Render the account template
+	data := app.newTemplateData(r)
+	data.User = user // use the user data to fill out the template
+
+	app.render(w, http.StatusOK, "account.tmpl", data)
+}
+
+// Handler for displaying an HTML form
+// for allowing a user to change their password.
+func (app *application) accountPasswordUpdate(w http.ResponseWriter, r *http.Request) {
+	data := app.newTemplateData(r)
+	data.Form = accountPasswordUpdateForm{}
+
+	app.render(w, http.StatusOK, "password.tmpl", data)
+}
+
+// Handler that processes an HTML form for chaning a user's password.
+func (app *application) accountPasswordUpdatePost(w http.ResponseWriter, r *http.Request) {
+	var form accountPasswordUpdateForm
+
+	err := app.decodePostForm(r, &form)
+	if err != nil {
+		app.clientError(w, http.StatusBadRequest)
+		return
+	}
+
+	// Form validation checks: all three fields required,
+	// newPassword at least 8 chars long, newPasswordConfirmation and newPassword MATCH.
+	form.CheckField(validator.NotBlank(form.CurrentPassword), "currentPassword", "This field cannot be blank")
+	form.CheckField(validator.NotBlank(form.NewPassword), "newPassword", "This field cannot be blank")
+	form.CheckField(validator.NotBlank(form.NewPasswordConfirmation), "newPasswordConfirmation", "This field cannot be blank")
+	form.CheckField(validator.MinChars(form.NewPassword, 8), "newPassword", "This field must be at least 8 characters long")
+	form.CheckField(form.NewPassword == form.NewPasswordConfirmation, "newPasswordConfirmation", "Passwords must match")
+
+	// Re-display form
+	if !form.Valid() {
+		data := app.newTemplateData(r)
+		data.Form = form
+		app.render(w, http.StatusUnprocessableEntity, "password.tmpl", data)
+		return
+	}
+
+	// 2) Call PasswordUpdate
+	userID := app.sessionManager.GetInt(r.Context(), "authenticatedUserID")
+
+	err = app.users.PasswordUpdate(userID, form.CurrentPassword, form.NewPassword)
+	if err != nil {
+		if errors.Is(err, models.ErrInvalidCredentials) {
+
+			form.AddNonFieldError("Email or password is incorrect")
+			data := app.newTemplateData(r)
+			data.Form = form
+			app.render(w, http.StatusUnprocessableEntity, "password.tmpl", data)
+		} else {
+			app.serverError(w, err)
+		}
+		return
+	}
+
+	// 3) Flash a message to user session saying password updated
+	app.sessionManager.Put(r.Context(), "flash", "Your password has been updated.")
+
+	http.Redirect(w, r, "/account/view", http.StatusSeeOther)
+}
+
+// NOTE: miscellaneous handlers
+
+// Handler to display an HTML form of the about page.
+func (app *application) about(w http.ResponseWriter, r *http.Request) {
+	// Simply render the template and nothing else.
+	data := app.newTemplateData(r)
+	app.render(w, http.StatusOK, "about.tmpl", data)
 }
 
 // A simple ping handler to demonstrate testing handlers and middleware.

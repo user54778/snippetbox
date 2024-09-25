@@ -10,6 +10,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type UserModelInterface interface {
+	Insert(name, email, password string) error
+	Authenticate(email, password string) (int, error)
+	Exists(id int) (bool, error)
+	Get(id int) (*User, error)
+	PasswordUpdate(id int, currentPassword, newPassword string) error
+}
+
 // A new user type to directly represent the database.
 type User struct {
 	ID             int
@@ -26,7 +34,6 @@ type UserModel struct {
 
 // Now, we will define methods on this type
 // for interacting with the Users database.
-
 func (m *UserModel) Insert(name, email, password string) error {
 	// Create a bcrypt hash of the plain-text password.
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), 12)
@@ -104,4 +111,64 @@ func (m *UserModel) Exists(id int) (bool, error) {
 
 	err := m.DB.QueryRow(stmt, id).Scan(&exists)
 	return exists, err
+}
+
+// Get a user id from the `users` database.
+func (m *UserModel) Get(id int) (*User, error) {
+	stmt := `SELECT id, name, email, created FROM users WHERE id = ?`
+
+	tuple := m.DB.QueryRow(stmt, id)
+
+	// zeroed User pointer
+	user := &User{}
+
+	err := tuple.Scan(&user.ID, &user.Name, &user.Email, &user.Created)
+	if err != nil {
+		// No tuples returned
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNoRecord
+		} else {
+			return nil, err
+		}
+	}
+
+	return user, nil
+}
+
+// Updates a user's password in the `users` database.
+func (m *UserModel) PasswordUpdate(id int, currentPassword, newPassword string) error {
+	// retrieve the user's details via id from the database.
+	var hashedPassword []byte
+	stmt := `SELECT hashed_password FROM users WHERE id = ?`
+
+	err := m.DB.QueryRow(stmt, id).Scan(&hashedPassword)
+	if err != nil {
+		// Doesn't exists or user has been deactivated
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidCredentials
+		} else {
+			return nil
+		}
+	}
+	// check the currentPassword matches the hashed password.
+	err = bcrypt.CompareHashAndPassword(hashedPassword, []byte(currentPassword))
+	if err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return ErrInvalidCredentials
+		} else {
+			return err
+		}
+	}
+	// hash the newPassword value
+	newHashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), 12)
+	if err != nil {
+		return err
+	}
+
+	// update the hashed_password column in the users table
+	stmt = `UPDATE users SET hashed_password = ? WHERE id = ?`
+
+	_, err = m.DB.Exec(stmt, string(newHashedPassword), id)
+
+	return err
 }

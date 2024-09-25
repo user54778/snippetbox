@@ -19,11 +19,13 @@ import (
 )
 
 // This type holds application-wide dependencies for our webapp.
+// Updated snippets and users to use their interface types.
 type application struct {
+	debug          bool
 	errorLog       *log.Logger
 	infoLog        *log.Logger
-	snippets       *models.SnippetModel          // NOTE: Make the SnippetModel available to our handlers.
-	users          *models.UserModel             // Same as SnippetModel
+	snippets       models.SnippetModelInterface
+	users          models.UserModelInterface
 	templateCache  map[string]*template.Template // make avail cache to our handlers
 	formDecoder    *form.Decoder
 	sessionManager *scs.SessionManager
@@ -51,6 +53,8 @@ func main() {
 	addr := flag.String("addr", ":4000", "HTTP network address")
 	// Define a new cli flag for the MySQL DSN string
 	dsn := flag.String("dsn", "web:pass@/snippetbox?parseTime=true", "MySQL data source name")
+	// New cli flag for debug mode
+	debug := flag.Bool("debug", false, "Enable debug mode")
 
 	// Parse CLI flag.
 	// This reads in the CLI flag value and assigns it to addr.
@@ -87,6 +91,7 @@ func main() {
 	// Initialize a models.SnippetModel instance and add it to the application
 	// dependencies.
 	app := &application{
+		debug:          *debug,
 		errorLog:       errorLog,
 		infoLog:        infoLog,
 		snippets:       &models.SnippetModel{DB: db},

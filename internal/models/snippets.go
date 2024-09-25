@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// Describe the methods the SnippetModel type should have.
+// (Mainly used for testing purposes)
+type SnippetModelInterface interface {
+	Insert(title string, content string, expires int) (int, error)
+	Get(id int) (*Snippet, error)
+	Latest() ([]*Snippet, error)
+}
+
 // Hold the data for an individual snippet.
 // Notice that the fields corresponds to fields in the MySQL
 // table.

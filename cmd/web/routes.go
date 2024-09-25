@@ -33,11 +33,17 @@ func (app *application) routes() http.Handler {
 	// static file will be served (as long as it exists).
 	router.Handler(http.MethodGet, "/static/*filepath", fileServer)
 
+	// Add a new GET /ping route, which calls HandlerFunc since it's not a part of any
+	// middleware chain.
+	router.HandlerFunc(http.MethodGet, "/ping", ping)
+
 	// NOTE: Unprotected application routes using the "dynamic" middleware chain
 	dynamic := alice.New(app.sessionManager.LoadAndSave, noSurf, app.authenticate)
 
 	// http method, pattern req url path must match, handler to dispatch to
 	router.Handler(http.MethodGet, "/", dynamic.ThenFunc(app.home))
+	// About route
+	router.Handler(http.MethodGet, "/about", dynamic.ThenFunc(app.about))
 	router.Handler(http.MethodGet, "/snippet/view/:id", dynamic.ThenFunc(app.snippetView))
 	router.Handler(http.MethodGet, "/user/signup", dynamic.ThenFunc(app.userSignup))
 	router.Handler(http.MethodPost, "/user/signup", dynamic.ThenFunc(app.userSignupPost))
@@ -51,6 +57,9 @@ func (app *application) routes() http.Handler {
 	router.Handler(http.MethodGet, "/snippet/create", protected.ThenFunc(app.snippetCreate))
 	router.Handler(http.MethodPost, "/snippet/create", protected.ThenFunc(app.snippetCreatePost))
 	router.Handler(http.MethodPost, "/user/logout", protected.ThenFunc(app.userLogoutPost))
+	router.Handler(http.MethodGet, "/account/view", protected.ThenFunc(app.accountView))
+	router.Handler(http.MethodGet, "/account/password/update", protected.ThenFunc(app.accountPasswordUpdate))
+	router.Handler(http.MethodPost, "/account/password/update", protected.ThenFunc(app.accountPasswordUpdatePost))
 
 	// NOTE: logRequest ↔ secureHeaders ↔ servemux ↔ handler
 	// return app.recoverPanic(app.logRequest(secureHeaders(mux)))
